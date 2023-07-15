@@ -1,0 +1,366 @@
+<!DOCTYPE html>
+<html>
+
+<head>
+    <script src="../dist/face-api.js"></script>
+    <script src="public/commons.js"></script>
+    <link rel="stylesheet" href="public/styles.css">
+    <link rel="stylesheet" href="https://cdnjs.cloudflare.com/ajax/libs/materialize/0.100.2/css/materialize.css">
+    <script type="text/javascript" src="https://code.jquery.com/jquery-2.1.1.min.js"></script>
+    <script src="https://cdnjs.cloudflare.com/ajax/libs/materialize/0.100.2/js/materialize.min.js"></script>
+    <script src="https://cdn.jsdelivr.net/npm/@tensorflow/tfjs@1.0.0/dist/tf.min.js"></script>
+
+<!--    <script src="https://cdn.jsdelivr.net/npm/@tensorflow/tfjs@0.13.3/dist/tf.min.js"> </script>-->
+    <style>
+        #status {
+            color: #FFF;
+        }
+        .inline {
+            display: inline-block;
+        }
+    </style>
+</head>
+
+<body>
+
+    <div class="container">
+        <div class="progress" id="loader">
+            <div class="indeterminate"></div>
+        </div>
+        <header>
+            
+            <h4 id="status" class="style-header">
+                Inicializando el video ...
+            </h4>
+        </header>
+        <article>
+            <div style="position: relative;" class="margin style-camera">
+                <video onplay="onPlay(this)" id="inputVideo" autoplay muted></video>
+                <canvas id="overlay" style="margin: 0px -10px -10px 0px;"/>
+                <canvas id='canvas' />
+            </div>
+        </article>
+        <aside class="aside-main aside-2">
+            <p class="style-aside">Puntuación:</p>
+            <div id="scoreboard">
+                <span id="score">0</span>
+            </div>
+            <p class="style-aside">¡Sube tu puntaje y participa!</p>
+            <form>
+                <input id="nombreInput" class="inputform" placeholder="Ingresa tu nombre ...">
+                </input>
+                <input id="emailInput" class="inputform" placeholder="Ingresa tu email ...">
+                </input>
+                <button onclick="return sendScoreFirebase()" class="custom-btn btn-6">ENVIAR</button>
+            </form>
+        </aside>
+        
+        <aside class="aside-main aside-1">
+            <p class="style-aside">¿Cómo jugar?</p>
+            <p>El juego consiste en intentar desbloquear la mayor cantidad de emociones, 
+                cada emoción nueva conseguida significa un mayor puntaje!
+            </p>
+            <button onclick="startCountdown()" class="custom-btn btn-6">
+                <span>START GAME</span>
+            </button>
+            <div id="countdown-overlay">
+                <h1 id="countdown-text"></h1>
+            </div>
+            <p class="style-aside">¡Tú lista de emociones! </p>
+            <ul id="miLista"></ul>
+        </aside>
+
+    </div>
+
+    <script>
+        let scoreThreshold = 0.5
+        let sizeType = '224'
+        let modelLoaded = false
+        
+
+        var cImg;
+        var constraints = {
+            audio: false,
+            video: {
+                width: 650,
+                height: 500,
+            }
+        };
+        var EmotionModel;
+        var offset_x = 27;
+        var offset_y = 20;
+        var emotion_labels = ["enojado", "disgustado", "asustado", "feliz", "triste", "sorprendido", "neutral"];
+        var emotion_colors = ["#ff0000", "#00a800", "#ff4fc1", "#ffe100", "#306eff", "#ff9d00", "#7c7c7c"];
+
+        let forwardTimes = []
+
+        let flag = false;
+        let flagcount = true;
+
+        var previousValue = null;
+        var label;
+        var score = 0;
+        const datossupport = [];
+
+        async function addItems(itsup) {
+            const lista = document.getElementById("miLista");
+            
+            if(!datossupport.includes(itsup)){
+                lista.innerHTML = "";
+                datossupport.push(itsup);
+                sumarPuntuacion(200);
+                datossupport.forEach((elemento) => {
+                    const li = document.createElement("li");
+                    li.textContent = elemento;
+                    lista.appendChild(li);
+                });
+            }
+        }
+        const validarEmocion = (valorActual) => {
+            if (!flag) {
+                flag = true;
+                setTimeout(() => {
+                    const valorActualAux = valorActual;
+                    if (valorActual === valorActualAux) {
+                        console.log('push a la emoción', valorActual);
+                        addItems(valorActual);
+                        flag = false;
+                        valorActual = null;
+                        valorActualAux = null;
+                    }
+                }, 2000);
+            }
+        }
+        function startCountdown() {
+        var overlay = document.getElementById("countdown-overlay");
+        var countdownText = document.getElementById("countdown-text");
+
+        overlay.style.display = "flex";
+
+        var count = 3;
+        countdownText.textContent = count;
+
+        var countdownInterval = setInterval(function() {
+            count--;
+            countdownText.textContent = count;
+
+            if (count === 0) {
+            clearInterval(countdownInterval);
+            overlay.style.display = "none";
+            countdownRunning = false;
+
+            // Cambiar el flag a false durante 10 segundos
+            flagcount = false;
+            setTimeout(function() {
+                flagcount = true;
+            }, 20000);
+            }
+        }, 1000);
+        }
+
+        function sumarPuntuacion(morescore) {
+            var scoreElement = document.getElementById("score");
+            score = parseInt(scoreElement.textContent);
+            var nuevaPuntuacion = score + morescore;
+            scoreElement.textContent = nuevaPuntuacion;
+        }
+
+        function sendScoreFirebase() {
+            var nombre = document.getElementById('nombreInput').value;
+            var email = document.getElementById('emailInput').value;
+            var dataType = "json";
+            const url = 'https://us-central1-gdsc-peru.cloudfunctions.net/getAssistants';
+            
+            const data= {
+                email: email,
+                score: score
+            }
+
+            $.ajax({
+                type:"post", 
+                url:url, 
+                data:data, 
+                success:function(data){ 
+                    console.log("Se envió "+data+" exitosamente")
+                },
+                dataType: dataType 
+            })
+
+            score = 0;
+            const lista = document.getElementById("miLista");
+            lista.innerHTML = "";
+            datossupport = [];
+
+            document.getElementById('nombreInput').value = '';
+            document.getElementById('emailInput').value = '';
+        }
+
+
+        function updateTimeStats(timeInMs) {
+            forwardTimes = [timeInMs].concat(forwardTimes).slice(0, 30)
+            const avgTimeInMs = forwardTimes.reduce((total, t) => total + t) / forwardTimes.length
+            $('#time').val(`${Math.round(avgTimeInMs)} ms`)
+            $('#fps').val(`${faceapi.round(1000 / avgTimeInMs)}`)
+        }
+
+        function onIncreaseThreshold() {
+            scoreThreshold = Math.min(faceapi.round(scoreThreshold + 0.1), 1.0)
+            $('#scoreThreshold').val(scoreThreshold)
+        }
+
+        function onDecreaseThreshold() {
+            scoreThreshold = Math.max(faceapi.round(scoreThreshold - 0.1), 0.1)
+            $('#scoreThreshold').val(scoreThreshold)
+        }
+
+        function onSizeTypeChanged(e, c) {
+            sizeType = e.target.value
+            $('#sizeType').val(sizeType)
+        }
+
+        async function onPlay(videoEl) {
+            if (videoEl.paused || videoEl.ended || !modelLoaded)
+                return false
+
+            const {
+                width,
+                height
+            } = faceapi.getMediaDimensions(videoEl)
+            const canvas = $('#overlay').get(0)
+            canvas.width = width
+            canvas.height = height
+
+            const forwardParams = {
+                inputSize: parseInt(sizeType),
+                scoreThreshold
+            }
+
+            const ts = Date.now()
+            const result = await faceapi.detectAllFaces(videoEl, new faceapi.TinyFaceDetectorOptions(forwardParams))
+            console.result
+//            const result = await faceapi.tinyYolov2(videoEl, forwardParams)
+            if (result.length != 0) {
+                const context = canvas.getContext('2d')
+                context.drawImage(videoEl, 0, 0, width, height)
+
+                let ctx = context;
+                ctx.lineWidth = 4;
+                ctx.font = "25px Arial"
+                ctx.fillText('Result', 0, 0);
+
+                for (var i = 0; i < result.length; i++) {
+                    ctx.beginPath();
+                    var item = result[i].box;
+                    let s_x = Math.floor(item._x+offset_x);
+                    if (item.y<offset_y){
+                        var s_y = Math.floor(item._y);
+                    }
+                    else{
+                        var s_y = Math.floor(item._y-offset_y);
+                    }
+                    let s_w = Math.floor(item._width-offset_x);
+                    let s_h = Math.floor(item._height);
+                    let cT = ctx.getImageData(s_x, s_y, s_w, s_h);
+                    cT = preprocess(cT);
+
+                    z = EmotionModel.predict(cT)
+                    let index = z.argMax(1).dataSync()[0]
+                    label = emotion_labels[index];
+                    
+                    console.log(flagcount);
+                    if(!flagcount){
+                        validarEmocion(label);
+                    }
+
+                    ctx.strokeStyle = emotion_colors[index];
+                    ctx.rect(s_x, s_y, s_w, s_h);
+                    ctx.stroke();
+                    ctx.fillStyle = emotion_colors[index];
+                    ctx.fillText(label, s_x, s_y);
+                    ctx.closePath();
+                }
+                
+            }
+            
+            updateTimeStats(Date.now() - ts)
+
+            //            faceapi.drawDetection('overlay', result.map(det => det.forSize(width, height)), {
+            //                withScore: false
+            //            })
+            setTimeout(() => onPlay(videoEl))
+            var status = document.getElementById('status');
+            status.innerHTML = "Explora la IA en el GDSC Fest Peru y gana increíbles premios";
+            
+        }
+        
+        async function loadNetWeights(uri) {
+            return new Float32Array(await (await fetch(uri)).arrayBuffer())
+        }
+        // create model
+        async function createModel(path) {
+            let model = await tf.loadLayersModel(path)
+            return model
+        }
+        // load emotion model
+        async function loadModel(path) {
+
+            EmotionModel = await createModel(path)
+
+        }
+
+        function preprocess(imgData) {
+            return tf.tidy(() => {
+                let tensor = tf.browser.fromPixels(imgData).toFloat();
+
+                tensor = tensor.resizeBilinear([100, 100])
+
+                tensor = tf.cast(tensor, 'float32')
+                const offset = tf.scalar(255.0);
+                // Normalize the image 
+                const normalized = tensor.div(offset);
+                //We add a dimension to get a batch shape 
+                const batched = normalized.expandDims(0)
+                return batched
+            })
+        }
+
+        function successCallback(stream) {
+            var videoEl = $('#inputVideo').get(0)
+            videoEl.srcObject = stream;
+        }
+
+        function errorCallback(error) {
+            alert(error)
+            console.log("navigator.getUserMedia error: ", error);
+            //            alert("navigator.getUserMedia error: ", error)
+        }
+
+        async function run() {
+            const Model_url = '../models/tiny_face_detector/tiny_face_detector_model-weights_manifest.json'
+            await faceapi.loadTinyFaceDetectorModel(Model_url)
+            modelLoaded = true
+
+            var status = document.getElementById('status');
+            status.innerHTML = "Inicializando la camara ... ";
+
+            navigator.mediaDevices.getUserMedia(constraints)
+                .then(successCallback)
+                .catch(errorCallback);
+
+            onPlay($('#inputVideo').get(0))
+            $('#loader').hide()
+        }
+
+        $(document).ready(function() {
+            loadModel('../models/mobilenetv1_models/model.json')
+
+            const sizeTypeSelect = $('#sizeType')
+            sizeTypeSelect.val(sizeType)
+            sizeTypeSelect.on('change', onSizeTypeChanged)
+            sizeTypeSelect.material_select()
+            run()
+        })
+    </script>
+</body>
+
+</html>
